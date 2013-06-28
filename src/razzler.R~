@@ -1,0 +1,14 @@
+
+
+razzler <- function(a,b) {
+  l <- vector("list", length(a)+length(b))
+
+  j <- 1
+  for (i in 1:length(a)) {
+    l[[j]] <- a[i]
+    l[[j+1]] <- b[i]
+    j <- j+2
+  }
+  return(unlist(l))
+}
+

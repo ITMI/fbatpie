@@ -1,0 +1,13 @@
+Built fbat so that:
+
+Don't have to do the plink conversion from vcf..
+  can use the tped format which is super fast.
+
+And don't have to recode the variants, as with the fbat program.
+
+Will output a regular table … rather than a log file.
+
+Will allow different weighting functions which can bring in allele freqs from caviar.
+
+Used a modular approach coded in python, making it easy to modify.
+
