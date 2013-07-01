@@ -46,6 +46,7 @@ class SingleTest:
         self.markers = list(set(gs))
         self.markers.sort() # markers will go [0,1,2] or [0,A,B] etc.
         self.thismarker = marker
+        self.markerCount = [0,0,0]
         self.allelefreq = 0
         self.X = []
         self.S = []     # sum_j of X_ij * T_ij
@@ -66,9 +67,25 @@ class SingleTest:
         # famidx [0, 3, .. ]
         # cidx = [ 1 ]
         # pidx = [[0,2], ... ]
-                              
+
+    def markerSet(self):
+        if len(self.markers) < 3 and self.markers[0] != '0':
+            self.markers = ['0', self.markers[0], self.markers[1]]
+        if len(self.markers) > 2:
+            self.markerCount[0] = self.gs.count(self.markers[0])
+            self.markerCount[1] = self.gs.count(self.markers[1])
+            self.markerCount[2] = self.gs.count(self.markers[2])
     def validate (self):
         """ look for problems in inheritance - log errors """
+        for i in range(len(self.famidx)):             # for each family
+            idx  = self.famidx[i]                     # family idx
+            cidx = map(lambda x:x+idx, self.childidx[i])     # get the child index e.g. [1]
+            pidx = map(lambda x:x+idx, self.paridx[i])       # get the parents index e.g. [0,2]
+            for j in cidx: # for each child in this family
+                cg = [self.gs[2*j], self.gs[2*j+1]] # child genotypes  ### EXPECTING ONE CHILD ###
+                pg1 = [self.gs[2*pidx[0]], self.gs[2*pidx[0]+1]]
+                pg2 = [self.gs[2*pidx[1]], self.gs[2*pidx[1]+1]]
+                # check it here!
 
     def Xfun(self, g):
         return(self.markers.index(g)-1)
@@ -139,20 +156,24 @@ class SingleTest:
              
     def test(self, printit):
         """ perform the single marker fbat test """
-        self.computeAlleleFreq()
-        self.computeS()
-        self.computeEofXandV()
-        self.computeUandV()
-        if sum(self.V) == 0 or sum(self.U) == 0:
-            self.Z = 0
-        else:
-            self.Z = sum(self.U) / math.sqrt(sum(self.V) + 0.0000001)
-        if(printit == True):
-            self.printTest()
+        self.markerSet()
+        if len(self.markers) > 2:
+            self.validate()
+            self.computeAlleleFreq()
+            self.computeS()
+            self.computeEofXandV()
+            self.computeUandV()
+            if sum(self.V) == 0 or sum(self.U) == 0:
+                self.Z = 0
+            else:
+                self.Z = sum(self.U) / math.sqrt(sum(self.V) + 0.0000001)
+            if(printit == True):
+                self.printTest()
 
     def printTest(self):
         childT = map(lambda x,y: x+y[0], self.famidx, self.childidx)
-        print(self.thismarker + "\t" + str(self.markers) + "\t" + str(self.allelefreq) + "\t" + str(self.famN) + "\t"
+        print(self.thismarker + "\t" + str(self.markers) + "\t" + str(self.markerCount) + "\t" 
+              + str(self.allelefreq) + "\t" + str(self.famN) + "\t"
               + str(sum(self.U)) + '0' + "\t" + str(sum(self.V)) + "\t" +  str(self.Z) + "\t" + str(self.pvalue) + "\t" 
               + str(self.qvalue))
         #print("T:    " + str([self.ts[i] for i in map(lambda x,y: x+y[0], self.famidx, self.childidx)]))
@@ -206,6 +227,7 @@ class FbatProb:
         self.exp[ str([1,1,2,2])] = 1
         self.exp[ str([2,2,1,1])] = 1
         self.exp[ str([1,2,1,2])] = 1
+        self.exp[ str([1,2,2,1])] = 1
         self.exp[ str([2,1,2,1])] = 1
         self.exp[ str([1,2,2,2])] = 1.5
         self.exp[ str([2,1,2,2])] = 1.5
@@ -255,7 +277,7 @@ class FbatProb:
             
     def expLookup(self,p1,p2,cg,markers):
         self.markers = markers  
-        if cg[0] == '0' and cg[1] == '0':  # if the child is missing
+        if cg[0] == '0' or cg[1] == '0':  # if the child is missing
             return(0) 
         if (p1[0] == '0' or p1[1] == '0' or
             p2[0] == '0' or p2[1] == '0'):  # if a parent is missing
@@ -263,7 +285,7 @@ class FbatProb:
         return(self.exp[str(self.toidx(p1+p2))])
       
     def varLookup(self,p1,p2,cg,markers):
-        if cg[0] == '0' and cg[1] == '0':  # if the child is missing
+        if cg[0] == '0' or cg[1] == '0':  # if the child is missing
             return(0) 
         if (p1[0] == '0' or p1[1] == '0' or
             p2[0] == '0' or p2[1] == '0'):  # if a parent is missing
