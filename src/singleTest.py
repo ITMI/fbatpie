@@ -75,6 +75,7 @@ class SingleTest:
             self.markerCount[0] = self.gs.count(self.markers[0])
             self.markerCount[1] = self.gs.count(self.markers[1])
             self.markerCount[2] = self.gs.count(self.markers[2])
+
     def validate (self):
         """ look for problems in inheritance - log errors """
         for i in range(len(self.famidx)):             # for each family
@@ -85,7 +86,14 @@ class SingleTest:
                 cg = [self.gs[2*j], self.gs[2*j+1]] # child genotypes  ### EXPECTING ONE CHILD ###
                 pg1 = [self.gs[2*pidx[0]], self.gs[2*pidx[0]+1]]
                 pg2 = [self.gs[2*pidx[1]], self.gs[2*pidx[1]+1]]
-                # check it here!
+                if not(((cg[0] == pg1[0] or cg[0] == pg1[1]) and 
+                    (cg[1] == pg2[0] or cg[1] == pg2[1])) or
+                    ((cg[0] == pg2[0] or cg[0] == pg2[1]) and 
+                    (cg[1] == pg1[0] or cg[1] == pg1[1]))):
+                    # not valid!
+                    sys.stderr.write("warning: family: " + str(i) + " has a mendelian error")
+                    cg[0] = '0' # zero it out
+                    cg[1] = '0'
 
     def Xfun(self, g):
         return(self.markers.index(g)-1)
