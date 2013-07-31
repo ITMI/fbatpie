@@ -1,6 +1,7 @@
 
 import sys
 import math
+from scipy import stats
 
 # FBAT - ISB implementation.
 # david l gibbs
@@ -36,13 +37,16 @@ class SingleTest:
     """ performs a single test"""
     useidx = [] # an index of the samples that pass validation
       
-    def __init__(self, marker, gs, ys, famidx, childidx, paridx):
+    def __init__(self, marker, chrm, gs, ys, famidx, childidx, paridx, silent, freqcutoff):
         """ any initial tasks """		      
         self.gs = gs # the genotypes for this marker
         self.ts = ys # the phenotypes for this marker, adjusted for offset == T_ij
         self.famidx = famidx # the index into families.
         self.childidx = childidx # index of children within families
         self.paridx = paridx
+        self.silent = silent # do we print the mendelian errors?
+        self.freqcutoff = freqcutoff
+        self.chrm = chrm
         self.markers = list(set(gs))
         self.markers.sort() # markers will go [0,1,2] or [0,A,B] etc.
         self.thismarker = marker
@@ -69,7 +73,9 @@ class SingleTest:
         # pidx = [[0,2], ... ]
 
     def markerSet(self):
-        if len(self.markers) < 3 and self.markers[0] != '0':
+        if len(self.markers) == 1:
+            self.markers = ['0', self.markers[0]]
+        elif len(self.markers) < 3 and self.markers[0] != '0':
             self.markers = ['0', self.markers[0], self.markers[1]]
         if len(self.markers) > 2:
             self.markerCount[0] = self.gs.count(self.markers[0])
@@ -91,7 +97,8 @@ class SingleTest:
                     ((cg[0] == pg2[0] or cg[0] == pg2[1]) and 
                     (cg[1] == pg1[0] or cg[1] == pg1[1]))):
                     # not valid!
-                    sys.stderr.write("warning: family: " + str(i) + " has a mendelian error")
+                    if self.silent == True:
+                        sys.stderr.write("warning: family: " + str(i) + " has a mendelian error")
                     cg[0] = '0' # zero it out
                     cg[1] = '0'
 
@@ -158,32 +165,39 @@ class SingleTest:
         self.famN = len(filter(lambda x: x != 0, self.U))                      # number of families with non-zero Us
         
         
-    def computePvalue(self, Z):
+    def computePvalue(self):
         """ compute either pvalues using either ChiSq or Z """
-        return(1)
+        ''' Z: abs(Z), lower.tail, *2 for two sided test.'''
+        f = stats.norm()
+        self.pvalue = (1-f.cdf(abs(self.Z))) * 2
              
     def test(self, printit):
         """ perform the single marker fbat test """
         self.markerSet()
-        if len(self.markers) > 2:
-            self.validate()
-            self.computeAlleleFreq()
-            self.computeS()
-            self.computeEofXandV()
-            self.computeUandV()
+        self.validate()
+        self.computeAlleleFreq()
+        self.computeS()
+        self.computeEofXandV()
+        self.computeUandV()
+        if len(self.markers) > 2 and self.allelefreq > self.freqcutoff and sum(self.V) > 0:
             if sum(self.V) == 0 or sum(self.U) == 0:
                 self.Z = 0
             else:
                 self.Z = sum(self.U) / math.sqrt(sum(self.V) + 0.0000001)
-            if(printit == True):
-                self.printTest()
+            self.computePvalue()
+        else:
+            self.E = -1
+            self.V = -1
+            self.U = -1
+            self.famN = -1
+        if(printit == True and self.E != -1):
+            self.printTest()
 
     def printTest(self):
         childT = map(lambda x,y: x+y[0], self.famidx, self.childidx)
-        print(self.thismarker + "\t" + str(self.markers) + "\t" + str(self.markerCount) + "\t" 
+        print(self.chrm + "\t" + self.thismarker + "\t" + str(self.markers) + "\t" + str(self.markerCount) + "\t" 
               + str(self.allelefreq) + "\t" + str(self.famN) + "\t"
-              + str(sum(self.U)) + '0' + "\t" + str(sum(self.V)) + "\t" +  str(self.Z) + "\t" + str(self.pvalue) + "\t" 
-              + str(self.qvalue))
+              + str(sum(self.U)) + '0' + "\t" + str(sum(self.V)) + "\t" +  str(self.Z) + "\t" + str(self.pvalue))
         #print("T:    " + str([self.ts[i] for i in map(lambda x,y: x+y[0], self.famidx, self.childidx)]))
         #print("X:    " + str(self.X))
         #print("EofX: " + str(self.EofX))
@@ -236,6 +250,7 @@ class FbatProb:
         self.exp[ str([2,2,1,1])] = 1
         self.exp[ str([1,2,1,2])] = 1
         self.exp[ str([1,2,2,1])] = 1
+        self.exp[ str([2,1,1,2])] = 1
         self.exp[ str([2,1,2,1])] = 1
         self.exp[ str([1,2,2,2])] = 1.5
         self.exp[ str([2,1,2,2])] = 1.5
@@ -253,8 +268,8 @@ class FbatProb:
         self.var[ str([1,2,1,1])] = 0.5
         self.var[ str([1,1,2,2])] = 1.0 
         self.var[ str([2,2,1,1])] = 1.0 
-        self.var[ str([1,2,2,1])] = 1.0 
-        self.var[ str([2,1,1,2])] = 1.0 
+        self.var[ str([1,2,2,1])] = 1.5 
+        self.var[ str([2,1,1,2])] = 1.5 
         self.var[ str([1,2,1,2])] = 1.5   
         self.var[ str([2,1,2,1])] = 1.5
         self.var[ str([1,2,2,2])] = 2.5
