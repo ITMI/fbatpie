@@ -4,11 +4,10 @@
 # dgibbs@systemsbiology.org
 # June 20, 2013
 
-
 # Goals:
 # single marker fbat test
 # rare-variant region-based test
-#
+# other variants .. how about log. reg.?
  
 # Input:
 # tped and tfam files as specified by plink.  No recoding needed.
@@ -28,214 +27,150 @@
 #
 # Var(U) = sum_i (U_i)^2 for one nuclear family per pedigree
 # where U_i is the i-th families contribution to U
+from itertools import product
 
 import sys
 import math
-import singleTest
-import rareTest
+import fileloader
+import computer
+import family
+import validator
 import numpy as np
 import gzip
+from math import sqrt
 
 class FBAT:
     """ the fbat test object """
     
-    def __init__(self):
+    def __init__(self, analysis, tfam, tped, mode, offset, afreq, nfams, verbose):
         """ any initial tasks """
-        self.tfamfile = ""
-        self.tpedfile = ""
-        self.tpedindex    = ""
-        self.freqcutoff = 0
-        self.tfam = []   # list of the family info, first six columns of ped
-        self.tped = []   # list of the snps .. each individual has two alleles [A11, A21, A12, A22, A13, A23, ...]
-        self.X = []      # the X matrix
-        self.resultTable = [] # save the results table ... maybe not?
-        self.minFamilies = 10 # the number of informative familes
-        self.famidx = []      # index into pedigrees found in tfam
-        self.childidx = []      # index into children
-        self.paridx = []        # index of the parents
-        self.markers = []     # a list of the markers
-        self.pedPhenotype = []  # phenotypes just like the ped
-        self.phenotype = []   # the phenotypes
-        self.offset = 0       # T_ij = Y_ij - offset
+        self.analysis = analysis
+        self.loader = fileloader.Loader(tfam, tped)
+        self.worker = computer.Computer(mode, offset, afreq)
+        self.familyList = self.loader.buildFamilyList()
+        self.validator = validator.Validator(verbose)
+        self.afreq = afreq
+        self.nfams = nfams
+        #for key in self.familyList:
+        #    self.familyList[key].printfam()
+        self.printFBAT(mode)
+
+    def printFBAT(self, m):
+        """ print a little statement about the object """
+        print("#FBAT")
+        print("#files: " + self.loader.tfamfile + "  " + self.loader.tpedfile)
+        print("#Number of families: " + str(len(self.familyList)))
+        print("#Offset: " + str(self.worker.offset))
+        print("#Mode: " + m)
         
-    def load (self, tfam_file, tped_file):
-        """ load the data here """
-        self.tpedfile=tped_file
-        self.tfamfile=tfam_file
-        if '.gz' in tped_file:
-            self.tped = gzip.open(tped_file,'r')
-        else:
-            self.tped = open(tped_file,'r')
-        if '.gz' in tfam_file:
-            tfam = gzip.open(tfam_file,'r').read().strip().split("\n")
-        else:
-            tfam = open(tfam_file,'r').read().strip().split("\n")
-        self.tfam = map(lambda x: x.split("\t"), tfam)
-        if len(self.tfam[1]) != 6:
-            print("Error: tfam has wrong number of columns")
-            sys.exit(2)
-        self.pedPhenotypes = map(lambda x: (x[5]), self.tfam)
-        self.phenotypes = self.adjPhenotypes(self.pedPhenotypes)
-        self.famidx, self.childidx, self.paridx = self.familyIndex(self.tfam)
-        self.checkForTrios()
 
-    def loadIndex (self, index_file):
-        # this file indexes the current tped #
-        self.tpedindex = np.load(self.tpedfile+".npy")
-        
-    def writeIndex(self):
-        # if there's no index file then we should write one
-        finped = gzip.open(self.tpedfile, 'r')
-        ped_line_offset = []
-        ped_line_name = []
-        offset = 0
-        for line in finped:
-            txt = line[0:128].split("\t")
-            #ped_line_name.append("chr"+txt[0]+":"+txt[3])
-            ped_line_name.append(txt[1])
-            ped_line_offset.append(offset)
-            offset += len(line)
-        finped.close()
-        idx = np.array([ped_line_name, ped_line_offset])
-        np.save(self.tpedfile+".npy", idx)
-
-    def checkForTrios(self):
-        gap = []
-        for i in range(len(self.famidx)-1):
-            gap.append(self.famidx[i+1] - self.famidx[i])
-        if any([x != 3 for x in gap]):
-            print("\nWARNING: non-trio pedigrees detected!\n")
-            print("check around family: ",
-                  str([i for i in range(len(gap)) if gap[i] != 3]))
-            sys.exit(0)
-
-    def setFreqCutoff(self, f):
-        self.freqcutoff = float(f)
-
-    def setOffset(self, o):
-        self.offset = o
-        self.applyOffset()
-
-    def adjPhenotypes(self,p):
-        # fbat takes ped format: 2 == affected, 1 == unaffected
-        # and codes them as 1 and 0 respectively.
-        ps = []
-        for pi in p:
-            if pi == '2':
-                ps.append('1')
-            elif pi == '1':
-                ps.append('0')
-            else:
-                ps.append('0')
-        return(ps)
-        
-    def familyIndex(self, tfam):
-            """ a list of families and indices into tfam """
-            famid = [] # index into families
-            chid = []  # index into children within families
-            parid = []
-            old = -1
-            c = []
-            p = []
-            for i in range(len(self.phenotypes)):
-                  if old != tfam[i][0]: # if we are starting a new family
-                        if len(c) > 0:
-                              chid.append(c) # if we were already making an index save it.
-                              parid.append(p)
-                        j = 0   # new child index starting for new family
-                        c = []  # index of children
-                        p = []  # index of parents
-                        famid.append(i) # record the index
-                        old = tfam[i][0]         # remember we're in family
-                  if tfam[i][2] == '0' and tfam[i][3] == '0': # then its a parent
-                        p.append(j)
-                  else:  # it's a kid
-                        c.append(j)
-                  j += 1
-                  if i == (len(self.phenotypes)-1): # end of the file
-                        chid.append(c)
-                        parid.append(p)
-            return([famid,chid,parid])                  
+#####################################################################################
     
-    def applyOffset(self):
-        ps = []
-        for i in range(len(self.pedPhenotypes)):
-            if self.pedPhenotypes[i] != '0':
-                ps.append(float(self.phenotypes[i])-float(self.offset))
-            else:
-                ps.append(float(0))
-        self.phenotypes = ps
-
     def single(self):
         """ perform the single marker test """
-        self.printFBAT()
-        print("Chr\tMarker\tAllele\tAlleleCounts\tafreq\tNfams\tS-E(S)\tVar(S)\tZ\tP")
-        for thisg in self.tped:
-            gs = thisg.strip().split("\t")
-            marker = gs[1]
-            chrm = gs[0]
-            s = singleTest.SingleTest(marker, chrm, gs[4:], self.phenotypes,
-                                      self.famidx, self.childidx, self.paridx,
-                                      False, self.freqcutoff)
-            s.test(True)
+        print("AnalysisName\tChr\tMarker\tAllele\tFamilies\tAlleleFreq\tU\tVar(U)\tZ\tP")
+        x = self.loader.getMarker()
+        while x != '':
+            # update family list
+            self.loader.updateFamilyList(x, self.familyList)
+            # validate the marker
+            self.validator.validateMarker(self.familyList)
+            # order the markers [missing, major, minor]
+            markers, markerCounts = self.validator.markerCheck(x[2], self.familyList)
+            # count the number of "informative families"
+            info = self.validator.countInfoFams(markers, self.familyList)
+            if len(markers) > 2:
+                if (info[3] > self.afreq) and (int(info[0]) >= int(self.nfams)) :
+                    # update the worker with alleles etc.
+                    self.worker.update(markers)
+                    # then perform the single marker fbat test #
+                    U = 0; VarU = 0;
+                    for k in self.familyList:
+                        # compute the individual stats
+                        self.worker.singleStats(self.familyList, k, '')
+                    cumulativeStats = self.worker.cumStats()                    
+                    print("\t".join(map(str, [self.analysis,x[1],x[0],markers,str(info[0])+":"
+                                              +str(info[2]),info[3]] + cumulativeStats)))
 
-    def buildDataSet(self, jdx):
-        # this takes the jdx index to a tped, and builds a list of those vars
-        # the index tells us where to seek #
-        thisData = []
-        chrms = []
-        fin = open(self.tpedfile,'r')
-        for j in jdx:
-            fin.seek(int(j))
-            l = fin.readline().strip().split("\t")
-            chrms.append(l[0])
-            thisData.append(l[4:])
-        return(thisData, chrms)
+            # AND GET THE NEXT MARKER TO TEST # 
+            x = self.loader.getMarker()
             
-    def rare(self, regionfile, indexfile, freqfile, weighted):
-        """ reads the region file and performs rare variant tests """
-        self.printFBAT()
-        if indexfile == "none" or indexfile == '':
-            self.writeIndex()
-            indexfile = self.tpedfile + ".npy"
-        self.loadIndex(indexfile)
-        if freqfile != "none":
-            freqs = open(freqfile,'r').read().strip().split("\n")
+
+###########################################################################################
+
+    def regionsingle(self, x, markername):
+        # update family list x = [markers, chrm, alleles]
+        self.loader.updateFamilyList(x, self.familyList)
+        # validate the marker
+        self.validator.validateMarker(self.familyList)
+        # order the markers [missing, major, minor]
+        markers, markerCounts = self.validator.markerCheck(x[2], self.familyList)
+        if len(markers) > 2:
+            # thisfreq = float(markerCounts[2])/ float(sum(markerCounts))
+            # update the worker with alleles etc.
+            self.worker.update(markers)
+            # then perform the single marker fbat test #
+            for k in self.familyList:
+                # compute the individual stats
+                self.worker.singleStats(self.familyList, k, markername)
+            cumulativeStats = self.worker.cumStats() #U\tVar(U)\tZ\tP
+            # then we need the var across region
+            return(cumulativeStats[0:2])
         else:
-            freqs = []
-        print("Chr\tRegion\tW\tVarW\tZ\tpvalue\talleles_used\tweights")
+            return([0,0])
+
+    def region(self, regionfile, indexfile):
+        # first we need the index to the data #
+        if indexfile == "none" or indexfile == '':
+            indexfile = self.loader.writeIndex()
+        tpedindex = self.loader.loadIndex(indexfile)
+        # then we get the list of regions # 
+        print("Analysis\tChr\tRegion\tW\tVarW\tZ\tpvalue")
         regions = open(regionfile,'r').read().strip().split("\n")
         regions = map(lambda x: x.strip(), regions)
+        regionstats = []
         for r in regions:
             try:
-                regionname = r.split("\t")[0]
-                theseMarkers = r.split("\t")[1:]
-                # find them in the index ...
-                idx = [i for i in range(len(self.tpedindex[0])) if self.tpedindex[0][i] in theseMarkers]
-                jdx = self.tpedindex[1][idx]
-                # then make the list of data using the file offsets .. call it thisData
-                thisData, chrms = self.buildDataSet(jdx)
+                self.worker.setupRegion()
+                vlist = []
+                ulist = []
+                rs = r.split("\t")
+                regionname = rs[0]
+                theseMarkers = rs[1:]
+                # try to find them in the data index ...
+                idx = [i for i in range(len(tpedindex[0])) if tpedindex[0][i] in theseMarkers]
+                jdx = tpedindex[1][idx]
+                markerset = [tpedindex[0][i] for i in range(len(tpedindex[0])) if tpedindex[0][i] in theseMarkers]
+                # and if we found them .. which we should ...
                 if len(jdx) > 0:
-                    t = rareTest.RareTest(regionname, theseMarkers, chrms, freqs, thisData,
-                                          self.phenotypes, self.famidx, self.childidx,
-                                          self.paridx, weighted)
-                    t.test()
+                    # then make the list of data using the file offsets .. call it thisData
+                    markers, chrms, thisData = self.loader.buildDataSet(jdx)
+                    # and for each marker in the list of data
+                    for i in range(len(thisData)):
+                        dat = [markers[i], chrms[i], thisData[i]]
+                        # get the single marker test statistics
+                        # need to retain the V from each test 
+                        U,VarU = self.regionsingle(dat, markerset[i])
+                        vlist.append(VarU)
+                        ulist.append(U)
+                    idx = [i for i in range(len(vlist)) if vlist[i] != 0]
+                    ulistx = [ulist[i] for i in idx]  # should put these in computer.py
+                    vlistx = [vlist[i] for i in idx]
+                    datter = [thisData[i] for i in idx]
+                    markernames = [markerset[i] for i in idx]
+                    self.worker.updateRegionM(len(vlistx))
+                    regionstats = self.worker.computeRegionStats(idx, markernames, 
+                                                                 ulistx, vlistx,
+                                                                 datter, self.familyList)
+                    regionstring = map(str, regionstats)
+                    chrm = ",".join(list(set(chrms)))
+                    print("\t".join([self.analysis, chrm, regionname] + regionstring))
             except KeyboardInterrupt:
                 sys.exit(0)
             except IOError:
                 print("file io error")
                 sys.exit(0)
             except:
-                pass
-
-    def printFBAT(self):
-        """ print a little statement about the object """
-        print("#FBAT")
-        print("#files: " + self.tfamfile + "  " + self.tpedfile)
-        print("#Number of families: " + str(len(self.famidx)))
-        print("#Offset: " + str(self.offset))
-        
-    def printResults(self):
-        """ print the results to a tab separated table """
-
-
+                print "Unexpected error:", sys.exc_info()[0]
+                raise
+                #pass

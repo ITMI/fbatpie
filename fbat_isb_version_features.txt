@@ -11,3 +11,4 @@ Will allow different weighting functions which can bring in allele freqs from ca
 
 Used a modular approach coded in python, making it easy to modify.
 
+Always reports the minor allele .. even when the ref and alt are switched!
