@@ -8,7 +8,7 @@ def main(argv):
     tpedfile = ''
     tfamfile = ''
     offset=0
-    afreq=0.05
+    afreq=0.01
     nfams = 10
     mode="additive"
     verbose="silent"
@@ -39,7 +39,7 @@ def main(argv):
         elif opt in ("--nfams"):
             nfams = arg
     if tfamfile == '' or tpedfile == '':
-        print "runSingle.py --analysis <a> --tped <tp> --tfam <tf> --offset <o> --afreq <cut> --mode <m> --verbose <v>"
+        print "runSingle.py --analysis <a> --tped <tp> --tfam <tf> --offset <o> --afreq <cut> --nfams <f> --mode <m> --verbose <v>"
         sys.exit()
             
     f = fbat.FBAT(analysis, tfamfile, tpedfile, mode, offset, afreq, nfams, verbose)
